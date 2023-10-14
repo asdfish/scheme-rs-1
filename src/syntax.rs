@@ -346,30 +346,14 @@ impl Syntax {
                 [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "syntax-rules" => {
                     ast::SyntaxRules::compile_to_expr(tail, env, cont, span).await
                 }
+                [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "set!" => {
+                    ast::Set::compile_to_expr(tail, env, cont, span).await
+                }
                 // Definition in expression context is an error:
                 [Self::Identifier { ident, span, .. }, ..]
                     if ident == "define" || ident == "define-syntax" =>
                 {
                     Err(CompileError::DefinitionInExpressionPosition(span.clone()))
-                }
-                // Very special form:
-                [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "set!" => {
-                    // Check for a variable transformer
-                    /*
-                    if let Some(Syntax::Identifier { ident, .. }) = tail.get(0) {
-                        if let Some((macro_env, transformer)) = env.fetch_macro(ident).await {
-                            if !transformer.read().await.is_variable_transformer() {
-                                return Err(CompileError::NotVariableTransformer);
-                            }
-                            return self
-                                .apply_transformer(env, macro_env, cont, transformer)
-                                .await?
-                                .compile(env, cont)
-                                .await;
-                        }
-                    }
-                    */
-                    ast::Set::compile_to_expr(tail, env, cont, span).await
                 }
                 // Special function call:
                 _ => ast::Call::compile_to_expr(exprs, env, cont, span).await,
