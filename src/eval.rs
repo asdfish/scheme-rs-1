@@ -319,14 +319,11 @@ impl Eval for ast::Vector {
         _env: &Env,
         _cont: &Option<Arc<Continuation>>,
     ) -> Result<Gc<Value>, RuntimeError> {
-        /*
         let mut output = Vec::new();
         for item in &self.vals {
-            output.push(item.eval(env, cont.clone()).await?);
+            output.push(Gc::new(item.clone()));
         }
         Ok(Gc::new(Value::Vector(output)))
-         */
-        todo!("FIXME: Vectors don't evaluate their arguments, take the literals")
     }
 }
 
