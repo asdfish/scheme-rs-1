@@ -176,12 +176,32 @@ impl Syntax {
         Box::pin(async move {
             match self {
                 Self::List { list, .. } => {
+                    // We have to check for the very special set! variable transformer form here
+                    match &list[..] {
+                        [Self::Identifier { ident, .. }, tail @ ..] if ident == "set!" => {
+                            // Check for a variable transformer
+                            if let Some(Syntax::Identifier { ident, .. }) = tail.get(0) {
+                                if let Some((macro_env, transformer)) = env.fetch_macro(ident).await
+                                {
+                                    if !transformer.read().await.is_variable_transformer() {
+                                        return Err(RuntimeError::not_variable_transformer());
+                                    }
+                                    return self
+                                        .apply_transformer(env, macro_env, cont, transformer)
+                                        .await;
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+
                     // If the head is not an identifier, we leave the expression unexpanded
                     // for now. We will expand it later
                     let ident = match list.get(0) {
                         Some(Self::Identifier { ident, .. }) => ident,
                         _ => return Ok(Expansion::Unexpanded(self)),
                     };
+
                     if let Some((macro_env, transformer)) = env.fetch_macro(ident).await {
                         return self
                             .apply_transformer(env, macro_env, cont, transformer)

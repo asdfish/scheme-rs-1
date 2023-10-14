@@ -38,6 +38,7 @@ pub enum RuntimeErrorKind {
         #[derivative(Debug = "ignore")]
         new_cont: Option<Arc<Continuation>>,
     },
+    NotVariableTransformer,
     Condition {
         // TODO
     },
@@ -100,6 +101,13 @@ impl RuntimeError {
         Self {
             backtrace: Vec::new(),
             kind: RuntimeErrorKind::InvalidType { expected, provided },
+        }
+    }
+
+    pub fn not_variable_transformer() -> Self {
+        Self {
+            backtrace: Vec::new(),
+            kind: RuntimeErrorKind::NotVariableTransformer,
         }
     }
 
