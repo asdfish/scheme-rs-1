@@ -1,8 +1,7 @@
 use crate::{
-    env::{Env, LexicalContour},
+    env::Env,
     eval::Eval,
     expand::Transformer,
-    gc::Gc,
     num::Number,
     syntax::{Identifier, Mark, Span, Syntax},
     util::ArcSlice,
@@ -92,13 +91,13 @@ impl Formals {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Body {
-    pub exprs: ArcSlice<Syntax>,
+    pub exprs: ArcSlice<Arc<dyn Eval>>,
 }
 
 impl Body {
-    pub fn new(exprs: Vec<Syntax>) -> Self {
+    pub fn new(exprs: Vec<Arc<dyn Eval>>) -> Self {
         Self {
             exprs: ArcSlice::from(exprs),
         }
@@ -107,8 +106,8 @@ impl Body {
 
 #[derive(Clone)]
 pub struct Let {
-    pub scope: Gc<LexicalContour>,
     pub bindings: Arc<[(Identifier, Arc<dyn Eval>)]>,
+    pub mark: Mark,
     pub body: Body,
 }
 
@@ -153,7 +152,7 @@ impl Or {
 
 #[derive(Clone)]
 pub struct Vector {
-    pub vals: Vec<Arc<dyn Eval>>,
+    pub vals: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -168,6 +167,13 @@ pub struct SyntaxCase {
 #[derive(Clone)]
 pub struct SyntaxRules {
     pub transformer: Transformer,
+}
+
+#[derive(Clone)]
+pub struct MacroExpansionContext {
+    pub mark: Mark,
+    pub macro_env: Env,
+    pub expr: Arc<dyn Eval>,
 }
 
 /*

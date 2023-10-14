@@ -9,6 +9,7 @@ use crate::{
     error::RuntimeError,
     gc::Gc,
     proc::{PreparedCall, Procedure},
+    syntax::Identifier,
     util,
     value::Value,
 };
@@ -65,6 +66,19 @@ impl Eval for Gc<Value> {
 }
 
 #[async_trait]
+impl Eval for Identifier {
+    async fn eval(
+        &self,
+        env: &Env,
+        _cont: &Option<Arc<Continuation>>,
+    ) -> Result<Gc<Value>, RuntimeError> {
+        env.fetch_var(self)
+            .await
+            .ok_or_else(|| RuntimeError::undefined_variable(self.clone()))
+    }
+}
+
+#[async_trait]
 impl Eval for ast::Literal {
     async fn eval(
         &self,
@@ -102,9 +116,9 @@ impl Eval for ast::Body {
                 cont,
             )));
             // Discard values that aren't returned
-            expr.compile(env, &cont).await?.eval(env, &cont).await?;
+            expr.eval(env, &cont).await?;
         }
-        last.compile(env, cont).await?.tail_eval(env, cont).await
+        last.tail_eval(env, cont).await
     }
 }
 
@@ -112,21 +126,19 @@ impl Eval for ast::Body {
 impl Eval for ast::Let {
     async fn tail_eval(
         &self,
-        _env: &Env,
+        env: &Env,
         cont: &Option<Arc<Continuation>>,
     ) -> Result<ValueOrPreparedCall, RuntimeError> {
-        let up = self.scope.read().await.up.clone();
+        let new_scope = Gc::new(env.new_lexical_contour(self.mark));
         for ((ident, expr), remaining) in util::iter_arc(&self.bindings) {
             let cont = Arc::new(Continuation::new(
-                Arc::new(ResumableLet::new(&self.scope, ident, remaining, &self.body)),
+                Arc::new(ResumableLet::new(&new_scope, ident, remaining, &self.body)),
                 cont,
             ));
-            let val = expr.eval(&up, &Some(cont)).await?;
-            self.scope.write().await.def_var(ident, val);
+            let val = expr.eval(env, &Some(cont)).await?;
+            new_scope.write().await.def_var(ident, val);
         }
-        self.body
-            .tail_eval(&Env::from(self.scope.clone()), cont)
-            .await
+        self.body.tail_eval(&Env::from(new_scope), cont).await
     }
 }
 
@@ -407,7 +419,13 @@ impl Eval for ast::SyntaxCase {
         match &*val {
             Value::Syntax(syntax) => {
                 let result = self.transformer.expand(syntax).unwrap();
-                result.compile(env, cont).await?.eval(env, cont).await
+                result
+                    .compile(env, cont)
+                    .await?
+                    .expr(env, cont)
+                    .await?
+                    .eval(env, cont)
+                    .await
             }
             _ => todo!(),
         }
@@ -422,5 +440,19 @@ impl Eval for ast::SyntaxRules {
         _cont: &Option<Arc<Continuation>>,
     ) -> Result<Gc<Value>, RuntimeError> {
         Ok(Gc::new(Value::Transformer(self.transformer.clone())))
+    }
+}
+
+#[async_trait]
+impl Eval for ast::MacroExpansionContext {
+    async fn tail_eval(
+        &self,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<ValueOrPreparedCall, RuntimeError> {
+        let new_env = Env::from(Gc::new(
+            env.new_expansion_context(self.mark, self.macro_env.clone()),
+        ));
+        self.expr.tail_eval(&new_env, cont).await
     }
 }

@@ -277,6 +277,12 @@ impl From<Gc<LexicalContour>> for Env {
     }
 }
 
+impl From<Gc<ExpansionContext>> for Env {
+    fn from(env: Gc<ExpansionContext>) -> Self {
+        Self::Expansion(env)
+    }
+}
+
 enum MacroLookup {
     WithEnv((Env, Gc<Value>)),
     WithoutEnv(Gc<Value>),

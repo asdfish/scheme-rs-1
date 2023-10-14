@@ -6,7 +6,7 @@ use crate::{
     eval::Eval,
     expand::{Pattern, SyntaxRule, Template, Transformer},
     gc::Gc,
-    syntax::{Identifier, Mark, Span, Syntax},
+    syntax::{wrap_expansions, CompileResultKind, Identifier, Mark, Span, Syntax},
     util::ArcSlice,
     value::Value,
 };
@@ -19,10 +19,12 @@ use std::{
 
 #[derive(From, Debug)]
 pub enum CompileError {
+    #[from(ignore)]
     UnexpectedEmptyList(Span),
-    UndefinedVariable(Identifier),
     RuntimeError(Box<RuntimeError>),
     NotVariableTransformer,
+    #[from(ignore)]
+    DefinitionInExpressionPosition(Span),
     CompileBodyError(CompileBodyError),
     CompileLetError(CompileLetError),
     CompileFuncCallError(CompileFuncCallError),
@@ -78,29 +80,6 @@ where
 }
 
 #[derive(Debug)]
-pub enum CompileBodyError {
-    EmptyBody(Span),
-}
-
-#[async_trait]
-impl Compile for ast::Body {
-    type Error = CompileBodyError;
-
-    async fn compile(
-        exprs: &[Syntax],
-        _env: &Env,
-        _cont: &Option<Arc<Continuation>>,
-        span: &Span,
-    ) -> Result<Self, CompileBodyError> {
-        if exprs.is_empty() {
-            return Err(CompileBodyError::EmptyBody(span.clone()));
-        }
-        // TODO: what if the body isn't a proper list?
-        Ok(ast::Body::new(exprs[..exprs.len() - 1].to_vec()))
-    }
-}
-
-#[derive(Debug)]
 pub enum CompileLetError {
     BadForm(Span),
     CompileBodyError(CompileBodyError),
@@ -141,16 +120,17 @@ impl Compile for ast::Let {
                 for item in &mut body {
                     item.mark(new_contour.mark);
                 }
+                let mark = new_contour.mark;
                 let env = Gc::new(new_contour);
-                let body = ast::Body::compile(&body, &Env::from(env.clone()), cont, span)
+                let body = ast::Body::compile(&body, &Env::from(env), cont, span)
                     .await
                     .map_err(CompileLetError::CompileBodyError)?;
                 Ok(ast::Let {
-                    scope: env,
                     bindings: compiled_bindings
                         .into_iter()
                         .map(|binding| (binding.ident, binding.expr))
                         .collect(),
+                    mark,
                     body,
                 })
             }
@@ -204,7 +184,7 @@ impl LetBinding {
                         });
                     }
 
-                    let expr = expr.compile(env, cont).await?;
+                    let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
 
                     Ok(LetBinding {
                         ident,
@@ -239,16 +219,14 @@ impl Compile for ast::Call {
     ) -> Result<ast::Call, CompileFuncCallError> {
         match exprs {
             [operator, args @ ..] => {
-                // TODO: Support macro expansions in the call position that eventually
-                // resolve into an identifier, that is a macro (or function)
                 let proc_name = match operator {
                     Syntax::Identifier { ident, .. } => ident.name.clone(),
                     _ => String::from("<lambda>"),
                 };
-                let operator = operator.compile(env, cont).await?;
+                let operator = operator.compile(env, cont).await?.expr(env, cont).await?;
                 let mut compiled_args = vec![operator];
                 for arg in &args[..args.len() - 1] {
-                    compiled_args.push(arg.compile(env, cont).await?);
+                    compiled_args.push(arg.compile(env, cont).await?.expr(env, cont).await?);
                 }
                 // TODO: what if it's not a proper list?
                 Ok(ast::Call {
@@ -285,14 +263,14 @@ impl Compile for ast::If {
     ) -> Result<Self, CompileIfError> {
         match exprs {
             [cond, success, Syntax::Nil { .. }] => Ok(ast::If {
-                cond: cond.compile(env, cont).await?,
-                success: success.compile(env, cont).await?,
+                cond: cond.compile(env, cont).await?.expr(env, cont).await?,
+                success: success.compile(env, cont).await?.expr(env, cont).await?,
                 failure: None,
             }),
             [cond, success, failure, Syntax::Nil { .. }] => Ok(ast::If {
-                cond: cond.compile(env, cont).await?,
-                success: success.compile(env, cont).await?,
-                failure: Some(failure.compile(env, cont).await?),
+                cond: cond.compile(env, cont).await?.expr(env, cont).await?,
+                success: success.compile(env, cont).await?.expr(env, cont).await?,
+                failure: Some(failure.compile(env, cont).await?.expr(env, cont).await?),
             }),
             [] => Err(CompileIfError::ExpectedConditional(span.clone())),
             [a1] => Err(CompileIfError::ExpectedArgumentAfterConditional(
@@ -335,7 +313,7 @@ impl Compile for ast::Define {
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => {
                 Ok(ast::Define::DefineVar(ast::DefineVar {
                     name: ident.clone(),
-                    val: expr.compile(env, cont).await?,
+                    val: expr.compile(env, cont).await?.expr(env, cont).await?,
                 }))
             }
             [Syntax::List { list, span }, body @ ..] => {
@@ -348,7 +326,7 @@ impl Compile for ast::Define {
                     }, args @ ..] => {
                         let mut bound = HashMap::<Identifier, Span>::new();
                         let mut fixed = Vec::new();
-                        let new_mark = Mark::new();
+                        let mut new_contour = env.new_lexical_contour(Mark::new());
                         for arg in &args[..args.len() - 1] {
                             match arg {
                                 Syntax::Identifier { ident, span, .. } => {
@@ -363,7 +341,8 @@ impl Compile for ast::Define {
                                     }
                                     bound.insert(ident.clone(), span.clone());
                                     let mut ident = ident.clone();
-                                    ident.mark(new_mark);
+                                    ident.mark(new_contour.mark);
+                                    new_contour.def_var(&ident, Gc::new(Value::Nil));
                                     fixed.push(ident.clone());
                                 }
                                 x => {
@@ -390,7 +369,8 @@ impl Compile for ast::Define {
                                         );
                                     }
                                     let mut remaining = ident.clone();
-                                    remaining.mark(new_mark);
+                                    remaining.mark(new_contour.mark);
+                                    new_contour.def_var(&remaining, Gc::new(Value::Nil));
                                     ast::Formals::VarArgs {
                                         fixed: fixed.into_iter().collect(),
                                         remaining,
@@ -408,16 +388,18 @@ impl Compile for ast::Define {
                         };
                         let mut body = body.to_vec();
                         for item in &mut body {
-                            item.mark(new_mark);
+                            item.mark(new_contour.mark);
                         }
-                        let body = ast::Body::compile(&body, env, cont, func_span)
+                        let mark = new_contour.mark;
+                        let env = Env::from(Gc::new(new_contour));
+                        let body = ast::Body::compile(&body, &env, cont, func_span)
                             .await
                             .map_err(CompileDefineError::CompileBodyError)?;
                         Ok(ast::Define::DefineFunc(ast::DefineFunc {
                             name: func_name.clone(),
                             args,
                             body,
-                            mark: new_mark,
+                            mark,
                         }))
                     }
                     [x, ..] => Err(CompileDefineError::BadForm(x.span().clone())),
@@ -449,7 +431,7 @@ impl Compile for ast::DefineSyntax {
         match expr {
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => Ok(ast::DefineSyntax {
                 name: ident.clone(),
-                transformer: expr.compile(env, cont).await?,
+                transformer: expr.compile(env, cont).await?.expr(env, cont).await?,
             }),
             _ => Err(CompileDefineSyntaxError::BadForm(span.clone())),
         }
@@ -497,7 +479,7 @@ impl Compile for ast::And {
         let mut output = Vec::new();
         // TODO: what if the arguments aren't a proper list?
         for expr in &exprs[..exprs.len() - 1] {
-            let expr = expr.compile(env, cont).await?;
+            let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
             output.push(expr);
         }
         Ok(Self::new(output))
@@ -517,7 +499,7 @@ impl Compile for ast::Or {
         let mut output = Vec::new();
         // TODO: what if the arguments aren't a proper list?
         for expr in &exprs[..exprs.len() - 1] {
-            let expr = expr.compile(env, cont).await?;
+            let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
             output.push(expr);
         }
         Ok(Self::new(output))
@@ -550,7 +532,7 @@ impl Compile for ast::Set {
             [] => Err(CompileSetError::ExpectedArgument(span.clone())),
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => Ok(ast::Set {
                 var: ident.clone(),
-                val: expr.compile(env, cont).await?,
+                val: expr.compile(env, cont).await?.expr(env, cont).await?,
             }),
             [arg1, _, Syntax::Nil { .. }] => {
                 Err(CompileSetError::ExpectedIdent(arg1.span().clone()))
@@ -616,7 +598,7 @@ impl Compile for ast::Lambda {
             [Syntax::List { list: args, .. }, body @ ..] => {
                 let mut bound = HashMap::<Identifier, Span>::new();
                 let mut fixed = Vec::new();
-                let new_mark = Mark::new();
+                let mut new_contour = env.new_lexical_contour(Mark::new());
                 for arg in &args[..args.len() - 1] {
                     match arg {
                         Syntax::Identifier { ident, span, .. } => {
@@ -629,7 +611,8 @@ impl Compile for ast::Lambda {
                             }
                             bound.insert(ident.clone(), span.clone());
                             let mut ident = ident.clone();
-                            ident.mark(new_mark);
+                            ident.mark(new_contour.mark);
+                            new_contour.def_var(&ident, Gc::new(Value::Nil));
                             fixed.push(ident);
                         }
                         x => return Err(CompileLambdaError::ExpectedIdentifier(x.span().clone())),
@@ -648,7 +631,8 @@ impl Compile for ast::Lambda {
                                 });
                             }
                             let mut remaining = ident.clone();
-                            remaining.mark(new_mark);
+                            remaining.mark(new_contour.mark);
+                            new_contour.def_var(&remaining, Gc::new(Value::Nil));
                             ast::Formals::VarArgs {
                                 fixed: fixed.into_iter().collect(),
                                 remaining,
@@ -665,16 +649,14 @@ impl Compile for ast::Lambda {
                 // as lambda does not create a lexical contour until it is run.
                 let mut body = body.to_vec();
                 for item in &mut body {
-                    item.mark(new_mark);
+                    item.mark(new_contour.mark);
                 }
-                let body = ast::Body::compile(&body, env, cont, span)
+                let mark = new_contour.mark;
+                let env = Env::from(Gc::new(new_contour));
+                let body = ast::Body::compile(&body, &env, cont, span)
                     .await
                     .map_err(CompileLambdaError::CompileBodyError)?;
-                Ok(ast::Lambda {
-                    args,
-                    body,
-                    mark: new_mark,
-                })
+                Ok(ast::Lambda { args, body, mark })
             }
             _ => todo!(),
         }
@@ -733,7 +715,7 @@ impl Compile for ast::SyntaxCase {
             }
         }
         Ok(ast::SyntaxCase {
-            arg: arg.compile(env, cont).await?,
+            arg: arg.compile(env, cont).await?.expr(env, cont).await?,
             transformer: Transformer {
                 rules: syntax_rules,
                 is_variable_transformer: false,
@@ -797,5 +779,142 @@ impl Compile for ast::SyntaxRules {
                 is_variable_transformer: false,
             },
         })
+    }
+}
+
+#[derive(Debug)]
+pub enum CompileBodyError {
+    CompileError(Box<CompileError>),
+    EmptyBody(Span),
+}
+
+impl_from_compile_error!(CompileBodyError);
+
+#[async_trait]
+impl Compile for ast::Body {
+    type Error = CompileBodyError;
+
+    async fn compile(
+        exprs: &[Syntax],
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+        span: &Span,
+    ) -> Result<Self, CompileBodyError> {
+        if exprs.is_empty() {
+            return Err(CompileBodyError::EmptyBody(span.clone()));
+        }
+        // TODO: what if the body isn't a proper list?
+        let expr_stream = ExprStream::new(&exprs[..exprs.len() - 1]);
+        Ok(ast::Body::new(expr_stream.collect(env, cont).await?))
+    }
+}
+
+pub struct ExprStream {
+    bodies: Vec<(Vec<(Mark, Env)>, std::vec::IntoIter<Syntax>)>,
+    next_expr: Option<Arc<dyn Eval>>,
+}
+
+impl ExprStream {
+    pub fn new(body: &[Syntax]) -> Self {
+        Self {
+            bodies: vec![(Vec::new(), Vec::from(body).into_iter())],
+            next_expr: None,
+        }
+    }
+}
+
+impl ExprStream {
+    pub async fn next_define(
+        &mut self,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<Option<(Span, Vec<Syntax>)>, CompileError> {
+        if self.next_expr.is_some() {
+            return Ok(None);
+        }
+
+        loop {
+            let (expansions, next) = loop {
+                let Some((expansions, mut head)) = self.bodies.pop() else {
+                    return Ok(None);
+                };
+
+                if let Some(next) = head.next() {
+                    self.bodies.push((expansions.clone(), head));
+                    break (expansions, next);
+                }
+            };
+
+            let mut compile_result = next.compile(env, cont).await?;
+            compile_result.push_macro_expansions(expansions);
+            match compile_result.kind {
+                CompileResultKind::Body(body) => self
+                    .bodies
+                    .push((compile_result.expansions, body.into_iter())),
+                CompileResultKind::Definition(def) => break Ok(Some((next.span().clone(), def))),
+                CompileResultKind::Expression(expr) => {
+                    self.next_expr = Some(wrap_expansions(&compile_result.expansions, expr));
+                    break Ok(None);
+                }
+                _ => (),
+            }
+        }
+    }
+
+    pub async fn next_expr(
+        &mut self,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<Option<Arc<dyn Eval>>, CompileError> {
+        if self.next_expr.is_some() {
+            return Ok(self.next_expr.take());
+        }
+        loop {
+            let (expansions, next) = loop {
+                let Some((expansions, mut head)) = self.bodies.pop() else {
+                    return Ok(None);
+                };
+
+                if let Some(next) = head.next() {
+                    self.bodies.push((expansions.clone(), head));
+                    break (expansions, next);
+                }
+            };
+
+            let mut compile_result = next.compile(env, cont).await?;
+            compile_result.push_macro_expansions(expansions);
+            match compile_result.kind {
+                CompileResultKind::Body(body) => self
+                    .bodies
+                    .push((compile_result.expansions, body.into_iter())),
+                CompileResultKind::Expression(expr) => {
+                    break Ok(Some(wrap_expansions(&compile_result.expansions, expr)));
+                }
+                CompileResultKind::Definition(_) | CompileResultKind::DefineSyntax => {
+                    break Err(CompileError::DefinitionInExpressionPosition(
+                        next.span().clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    pub async fn collect(
+        mut self,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<Vec<Arc<dyn Eval>>, CompileError> {
+        let mut defs = Vec::new();
+        while let Some(def) = self.next_define(env, cont).await? {
+            defs.push(def);
+        }
+        let mut output = Vec::new();
+        for (span, def) in defs {
+            output.push(ast::Define::compile_to_expr(&def, env, cont, &span).await?);
+        }
+        while let Some(expr) = self.next_expr(env, cont).await? {
+            output.push(expr);
+        }
+        Ok(output)
     }
 }

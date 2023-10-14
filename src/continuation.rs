@@ -9,7 +9,7 @@ use crate::{
     expand::Transformer,
     gc::Gc,
     proc::{Callable, PreparedCall},
-    syntax::{Identifier, Syntax},
+    syntax::Identifier,
     util::ArcSlice,
     value::Value,
 };
@@ -116,11 +116,11 @@ impl Eval for CatchContinuationCall {
 
 pub struct ResumableBody {
     env: Env,
-    remaining: ArcSlice<Syntax>,
+    remaining: ArcSlice<Arc<dyn Eval>>,
 }
 
 impl ResumableBody {
-    pub fn new(env: &Env, remaining: &ArcSlice<Syntax>) -> Self {
+    pub fn new(env: &Env, remaining: &ArcSlice<Arc<dyn Eval>>) -> Self {
         Self {
             env: env.clone(),
             remaining: remaining.clone(),
@@ -143,15 +143,9 @@ impl Resumable for ResumableBody {
                 Arc::new(ResumableBody::new(&self.env, &tail)),
                 cont,
             )));
-            expr.compile(&self.env, &cont)
-                .await?
-                .eval(&self.env, &cont)
-                .await?;
+            expr.eval(&self.env, &cont).await?;
         }
-        last.compile(&self.env, cont)
-            .await?
-            .eval(&self.env, cont)
-            .await
+        last.eval(&self.env, cont).await
     }
 }
 
@@ -182,6 +176,8 @@ impl Resumable for ResumableSyntaxCase {
                 let result = self.transformer.expand(syntax).unwrap();
                 result
                     .compile(&self.env, cont)
+                    .await?
+                    .expr(&self.env, cont)
                     .await?
                     .eval(&self.env, cont)
                     .await
@@ -491,6 +487,19 @@ impl Resumable for ResumableCall {
         PreparedCall::prepare(collected).eval(cont).await
     }
 }
+
+/*
+pub struct ResumableDefineFunc {
+    env: Env,
+    args: Formals,
+    mark: Mark,
+}
+
+#[async_trait]
+impl Resumable for ResumableDefineFunc {
+
+}
+*/
 
 #[builtin("call/cc")]
 pub async fn call_cc(

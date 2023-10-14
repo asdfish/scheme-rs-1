@@ -39,6 +39,7 @@ impl From<InputSpan<'_>> for Span {
     }
 }
 
+// TODO: Wrap Vecs in ArcSlices to reduce cloning
 #[derive(Clone, Debug)]
 pub enum Syntax {
     /// An empty list.
@@ -176,7 +177,7 @@ impl Syntax {
             match self {
                 Self::List { list, .. } => {
                     // If the head is not an identifier, we leave the expression unexpanded
-                    // for now. We will expand it later in the proc call
+                    // for now. We will expand it later
                     let ident = match list.get(0) {
                         Some(Self::Identifier { ident, .. }) => ident,
                         _ => return Ok(Expansion::Unexpanded(self)),
@@ -200,18 +201,94 @@ impl Syntax {
         })
     }
 
-    pub async fn compile_expanded(
+    pub fn compile<'a>(
+        &'a self,
+        env: &'a Env,
+        cont: &'a Option<Arc<Continuation>>,
+    ) -> BoxFuture<'a, Result<CompileResult, CompileError>> {
+        Box::pin(async move {
+            match self.expand(env, cont).await? {
+                Expansion::Expanded {
+                    mark,
+                    macro_env,
+                    syntax,
+                } => {
+                    let new_env =
+                        Env::Expansion(Gc::new(env.new_expansion_context(mark, macro_env.clone())));
+                    let mut result = syntax.compile(&new_env, cont).await?;
+                    result.push_macro_expansion(mark, macro_env);
+                    Ok(result)
+                }
+                Expansion::Unexpanded(syntax) => {
+                    if let Syntax::List { list, span } = syntax {
+                        match &list[..] {
+                            [Self::Identifier { ident, .. }, tail @ ..] if ident == "begin" => {
+                                return Ok(CompileResult::body(
+                                    self.span().clone(),
+                                    tail[..tail.len() - 1].to_owned(),
+                                ));
+                            }
+                            [head @ Syntax::List { .. }, tail @ ..] => {
+                                // Attempt to expand the first argument
+                                if let Expansion::Expanded {
+                                    mark,
+                                    macro_env,
+                                    syntax,
+                                } = head.expand(env, cont).await?
+                                {
+                                    let new_env = Env::Expansion(Gc::new(
+                                        env.new_expansion_context(mark, macro_env.clone()),
+                                    ));
+                                    let syntax: Vec<_> =
+                                        [syntax].into_iter().chain(tail.iter().cloned()).collect();
+                                    let syntax = Syntax::new_list(syntax, span.clone());
+                                    let mut result = syntax.compile(&new_env, cont).await?;
+                                    result.push_macro_expansion(mark, macro_env);
+                                    return Ok(result);
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    match syntax {
+                        Syntax::List { list, .. } => match &list[..] {
+                            [Self::Identifier { ident, .. }, tail @ ..] if ident == "define" => {
+                                env.def_var(ident, Gc::new(Value::Nil)).await;
+                                return Ok(CompileResult::definition(
+                                    self.span().clone(),
+                                    tail.to_owned(),
+                                ));
+                            }
+                            [Self::Identifier { ident, span, .. }, tail @ ..]
+                                if ident == "define-syntax" =>
+                            {
+                                ast::DefineSyntax::compile_to_expr(tail, env, cont, span)
+                                    .await?
+                                    .eval(env, cont)
+                                    .await?;
+                                return Ok(CompileResult::define_syntax(self.span().clone()));
+                            }
+                            _ => (),
+                        },
+                        _ => (),
+                    }
+                    Ok(CompileResult::expression(
+                        self.span().clone(),
+                        syntax.compile_expr(env, cont).await?,
+                    ))
+                }
+            }
+        })
+    }
+
+    pub async fn compile_expr(
         &self,
         env: &Env,
         cont: &Option<Arc<Continuation>>,
     ) -> Result<Arc<dyn Eval>, CompileError> {
         match self {
             Self::Nil { span } => Err(CompileError::UnexpectedEmptyList(span.clone())),
-            Self::Identifier { ident, .. } => Ok(Arc::new(
-                env.fetch_var(ident)
-                    .await
-                    .ok_or_else(|| CompileError::UndefinedVariable(ident.clone()))?,
-            ) as Arc<dyn Eval>),
+            Self::Identifier { ident, .. } => Ok(Arc::new(ident.clone()) as Arc<dyn Eval>),
             Self::Literal { literal, .. } => Ok(Arc::new(literal.clone()) as Arc<dyn Eval>),
             Self::List { list: exprs, span } => match &exprs[..] {
                 // Function call:
@@ -243,21 +320,22 @@ impl Syntax {
                 [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "or" => {
                     ast::Or::compile_to_expr(tail, env, cont, span).await
                 }
-                [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "define" => {
-                    ast::Define::compile_to_expr(tail, env, cont, span).await
-                }
-                [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "define-syntax" => {
-                    ast::DefineSyntax::compile_to_expr(tail, env, cont, span).await
-                }
                 [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "syntax-case" => {
                     ast::SyntaxCase::compile_to_expr(tail, env, cont, span).await
                 }
                 [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "syntax-rules" => {
                     ast::SyntaxRules::compile_to_expr(tail, env, cont, span).await
                 }
+                // Definition in expression context is an error:
+                [Self::Identifier { ident, span, .. }, ..]
+                    if ident == "define" || ident == "define-syntax" =>
+                {
+                    Err(CompileError::DefinitionInExpressionPosition(span.clone()))
+                }
                 // Very special form:
                 [Self::Identifier { ident, span, .. }, tail @ ..] if ident == "set!" => {
                     // Check for a variable transformer
+                    /*
                     if let Some(Syntax::Identifier { ident, .. }) = tail.get(0) {
                         if let Some((macro_env, transformer)) = env.fetch_macro(ident).await {
                             if !transformer.read().await.is_variable_transformer() {
@@ -270,30 +348,125 @@ impl Syntax {
                                 .await;
                         }
                     }
+                    */
                     ast::Set::compile_to_expr(tail, env, cont, span).await
                 }
                 // Special function call:
                 _ => ast::Call::compile_to_expr(exprs, env, cont, span).await,
             },
             Self::Vector { vector, .. } => {
-                let mut vals = Vec::new();
-                for item in vector {
-                    match item {
-                        Self::Nil { .. } => vals.push(Arc::new(ast::Nil) as Arc<dyn Eval>),
-                        item => vals.push(item.compile(env, cont).await?),
-                    }
-                }
+                let vals = vector.iter().map(Value::from_syntax).collect();
                 Ok(Arc::new(ast::Vector { vals }) as Arc<dyn Eval>)
             }
         }
     }
 
-    pub async fn compile(
+    pub async fn compile_repl(
         &self,
         env: &Env,
         cont: &Option<Arc<Continuation>>,
     ) -> Result<Arc<dyn Eval>, CompileError> {
-        self.expand(env, cont).await?.compile(env, cont).await
+        ast::Body::compile_to_expr(
+            &[
+                self.clone(),
+                Syntax::Nil {
+                    span: self.span().clone(),
+                },
+            ],
+            env,
+            cont,
+            self.span(),
+        )
+        .await
+    }
+}
+
+pub struct CompileResult {
+    pub span: Span,
+    pub expansions: Vec<(Mark, Env)>,
+    pub kind: CompileResultKind,
+}
+
+pub enum CompileResultKind {
+    Body(Vec<Syntax>),
+    Definition(Vec<Syntax>),
+    DefineSyntax,
+    Expression(Arc<dyn Eval>),
+}
+
+pub fn wrap_expansions(expansions: &[(Mark, Env)], mut expr: Arc<dyn Eval>) -> Arc<dyn Eval> {
+    for (mark, env) in expansions {
+        expr = Arc::new(ast::MacroExpansionContext {
+            mark: *mark,
+            macro_env: env.clone(),
+            expr,
+        });
+    }
+    expr
+}
+
+impl CompileResult {
+    fn body(span: Span, body: Vec<Syntax>) -> Self {
+        Self {
+            span,
+            expansions: Vec::new(),
+            kind: CompileResultKind::Body(body),
+        }
+    }
+
+    fn definition(span: Span, body: Vec<Syntax>) -> Self {
+        Self {
+            span,
+            expansions: Vec::new(),
+            kind: CompileResultKind::Definition(body),
+        }
+    }
+
+    fn define_syntax(span: Span) -> Self {
+        Self {
+            span,
+            expansions: Vec::new(),
+            kind: CompileResultKind::DefineSyntax,
+        }
+    }
+
+    fn expression(span: Span, expr: Arc<dyn Eval>) -> Self {
+        Self {
+            span,
+            expansions: Vec::new(),
+            kind: CompileResultKind::Expression(expr),
+        }
+    }
+
+    fn push_macro_expansion(&mut self, mark: Mark, macro_env: Env) {
+        self.expansions.push((mark, macro_env));
+    }
+
+    pub fn push_macro_expansions(&mut self, iter: impl IntoIterator<Item = (Mark, Env)>) {
+        self.expansions.extend(iter);
+    }
+
+    pub fn expr<'a>(
+        self,
+        env: &'a Env,
+        cont: &'a Option<Arc<Continuation>>,
+    ) -> BoxFuture<'a, Result<Arc<dyn Eval>, CompileError>> {
+        Box::pin(async move {
+            match self.kind {
+                CompileResultKind::Body(body) => {
+                    let mut res = Vec::new();
+                    for item in body {
+                        res.push(item.compile(env, cont).await?.expr(env, cont).await?);
+                    }
+                    Ok(wrap_expansions(
+                        &self.expansions,
+                        Arc::new(ast::Body::new(res)),
+                    ))
+                }
+                CompileResultKind::Expression(expr) => Ok(wrap_expansions(&self.expansions, expr)),
+                _ => Err(CompileError::DefinitionInExpressionPosition(self.span)),
+            }
+        })
     }
 }
 
@@ -318,6 +491,7 @@ impl Expansion<'_> {
     }
 }
 
+/*
 impl<'a> Expansion<'a> {
     pub fn compile(
         self,
@@ -335,16 +509,13 @@ impl<'a> Expansion<'a> {
                     // If the expression has been expanded, we may need to expand it again, but
                     // it must be done in a new expansion context.
                     let env = Env::Expansion(Gc::new(env.new_expansion_context(mark, macro_env)));
-                    syntax
-                        .expand(&env, cont)
-                        .await?
-                        .compile_expanded(&env, cont)
-                        .await
+                    syntax.expand(&env, cont).await?.compile(&env, cont).await
                 }
             }
         })
     }
 }
+*/
 
 impl std::ops::Deref for Expansion<'_> {
     type Target = Syntax;
@@ -400,7 +571,7 @@ impl ParsedSyntax {
         cont: &Option<Arc<Continuation>>,
     ) -> Result<Arc<dyn Eval>, CompileError> {
         Ok(Arc::new(CatchContinuationCall::new(
-            self.syntax.compile(env, cont).await?,
+            self.syntax.compile_repl(env, cont).await?,
         )))
     }
 }
