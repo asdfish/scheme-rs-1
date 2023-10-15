@@ -243,7 +243,7 @@ impl Syntax {
                     if let Syntax::List { list, span } = syntax {
                         match &list[..] {
                             [Self::Identifier { ident, .. }, tail @ ..] if ident == "begin" => {
-                                return Ok(CompileResult::body(
+                                return Ok(CompileResult::new_body(
                                     self.span().clone(),
                                     tail[..tail.len() - 1].to_owned(),
                                 ));
@@ -274,7 +274,7 @@ impl Syntax {
                         Syntax::List { list, .. } => match &list[..] {
                             [Self::Identifier { ident, .. }, tail @ ..] if ident == "define" => {
                                 env.def_var(ident, Gc::new(Value::Nil)).await;
-                                return Ok(CompileResult::definition(
+                                return Ok(CompileResult::new_definition(
                                     self.span().clone(),
                                     tail.to_owned(),
                                 ));
@@ -286,13 +286,13 @@ impl Syntax {
                                     .await?
                                     .eval(env, cont)
                                     .await?;
-                                return Ok(CompileResult::define_syntax(self.span().clone()));
+                                return Ok(CompileResult::new_define_syntax(self.span().clone()));
                             }
                             _ => (),
                         },
                         _ => (),
                     }
-                    Ok(CompileResult::expression(
+                    Ok(CompileResult::new_expr(
                         self.span().clone(),
                         syntax.compile_expr(env, cont).await?,
                     ))
@@ -410,7 +410,7 @@ pub fn wrap_expansions(expansions: &[(Mark, Env)], mut expr: Arc<dyn Eval>) -> A
 }
 
 impl CompileResult {
-    fn body(span: Span, body: Vec<Syntax>) -> Self {
+    fn new_body(span: Span, body: Vec<Syntax>) -> Self {
         Self {
             span,
             expansions: Vec::new(),
@@ -418,7 +418,7 @@ impl CompileResult {
         }
     }
 
-    fn definition(span: Span, body: Vec<Syntax>) -> Self {
+    fn new_definition(span: Span, body: Vec<Syntax>) -> Self {
         Self {
             span,
             expansions: Vec::new(),
@@ -426,7 +426,7 @@ impl CompileResult {
         }
     }
 
-    fn define_syntax(span: Span) -> Self {
+    fn new_define_syntax(span: Span) -> Self {
         Self {
             span,
             expansions: Vec::new(),
@@ -434,7 +434,7 @@ impl CompileResult {
         }
     }
 
-    fn expression(span: Span, expr: Arc<dyn Eval>) -> Self {
+    fn new_expr(span: Span, expr: Arc<dyn Eval>) -> Self {
         Self {
             span,
             expansions: Vec::new(),
@@ -450,7 +450,7 @@ impl CompileResult {
         self.expansions.extend(iter);
     }
 
-    pub fn expr<'a>(
+    pub fn to_expr<'a>(
         self,
         env: &'a Env,
         cont: &'a Option<Arc<Continuation>>,
@@ -460,7 +460,7 @@ impl CompileResult {
                 CompileResultKind::Body(body) => {
                     let mut res = Vec::new();
                     for item in body {
-                        res.push(item.compile(env, cont).await?.expr(env, cont).await?);
+                        res.push(item.compile(env, cont).await?.to_expr(env, cont).await?);
                     }
                     Ok(wrap_expansions(
                         &self.expansions,

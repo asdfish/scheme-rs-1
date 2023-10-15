@@ -184,7 +184,7 @@ impl LetBinding {
                         });
                     }
 
-                    let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
+                    let expr = expr.compile(env, cont).await?.to_expr(env, cont).await?;
 
                     Ok(LetBinding {
                         ident,
@@ -223,10 +223,14 @@ impl Compile for ast::Call {
                     Syntax::Identifier { ident, .. } => ident.name.clone(),
                     _ => String::from("<lambda>"),
                 };
-                let operator = operator.compile(env, cont).await?.expr(env, cont).await?;
+                let operator = operator
+                    .compile(env, cont)
+                    .await?
+                    .to_expr(env, cont)
+                    .await?;
                 let mut compiled_args = vec![operator];
                 for arg in &args[..args.len() - 1] {
-                    compiled_args.push(arg.compile(env, cont).await?.expr(env, cont).await?);
+                    compiled_args.push(arg.compile(env, cont).await?.to_expr(env, cont).await?);
                 }
                 // TODO: what if it's not a proper list?
                 Ok(ast::Call {
@@ -263,14 +267,14 @@ impl Compile for ast::If {
     ) -> Result<Self, CompileIfError> {
         match exprs {
             [cond, success, Syntax::Nil { .. }] => Ok(ast::If {
-                cond: cond.compile(env, cont).await?.expr(env, cont).await?,
-                success: success.compile(env, cont).await?.expr(env, cont).await?,
+                cond: cond.compile(env, cont).await?.to_expr(env, cont).await?,
+                success: success.compile(env, cont).await?.to_expr(env, cont).await?,
                 failure: None,
             }),
             [cond, success, failure, Syntax::Nil { .. }] => Ok(ast::If {
-                cond: cond.compile(env, cont).await?.expr(env, cont).await?,
-                success: success.compile(env, cont).await?.expr(env, cont).await?,
-                failure: Some(failure.compile(env, cont).await?.expr(env, cont).await?),
+                cond: cond.compile(env, cont).await?.to_expr(env, cont).await?,
+                success: success.compile(env, cont).await?.to_expr(env, cont).await?,
+                failure: Some(failure.compile(env, cont).await?.to_expr(env, cont).await?),
             }),
             [] => Err(CompileIfError::ExpectedConditional(span.clone())),
             [a1] => Err(CompileIfError::ExpectedArgumentAfterConditional(
@@ -313,7 +317,7 @@ impl Compile for ast::Define {
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => {
                 Ok(ast::Define::DefineVar(ast::DefineVar {
                     name: ident.clone(),
-                    val: expr.compile(env, cont).await?.expr(env, cont).await?,
+                    val: expr.compile(env, cont).await?.to_expr(env, cont).await?,
                 }))
             }
             [Syntax::List { list, span }, body @ ..] => {
@@ -431,7 +435,7 @@ impl Compile for ast::DefineSyntax {
         match expr {
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => Ok(ast::DefineSyntax {
                 name: ident.clone(),
-                transformer: expr.compile(env, cont).await?.expr(env, cont).await?,
+                transformer: expr.compile(env, cont).await?.to_expr(env, cont).await?,
             }),
             _ => Err(CompileDefineSyntaxError::BadForm(span.clone())),
         }
@@ -479,7 +483,7 @@ impl Compile for ast::And {
         let mut output = Vec::new();
         // TODO: what if the arguments aren't a proper list?
         for expr in &exprs[..exprs.len() - 1] {
-            let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
+            let expr = expr.compile(env, cont).await?.to_expr(env, cont).await?;
             output.push(expr);
         }
         Ok(Self::new(output))
@@ -499,7 +503,7 @@ impl Compile for ast::Or {
         let mut output = Vec::new();
         // TODO: what if the arguments aren't a proper list?
         for expr in &exprs[..exprs.len() - 1] {
-            let expr = expr.compile(env, cont).await?.expr(env, cont).await?;
+            let expr = expr.compile(env, cont).await?.to_expr(env, cont).await?;
             output.push(expr);
         }
         Ok(Self::new(output))
@@ -532,7 +536,7 @@ impl Compile for ast::Set {
             [] => Err(CompileSetError::ExpectedArgument(span.clone())),
             [Syntax::Identifier { ident, .. }, expr, Syntax::Nil { .. }] => Ok(ast::Set {
                 var: ident.clone(),
-                val: expr.compile(env, cont).await?.expr(env, cont).await?,
+                val: expr.compile(env, cont).await?.to_expr(env, cont).await?,
             }),
             [arg1, _, Syntax::Nil { .. }] => {
                 Err(CompileSetError::ExpectedIdent(arg1.span().clone()))
@@ -715,7 +719,7 @@ impl Compile for ast::SyntaxCase {
             }
         }
         Ok(ast::SyntaxCase {
-            arg: arg.compile(env, cont).await?.expr(env, cont).await?,
+            arg: arg.compile(env, cont).await?.to_expr(env, cont).await?,
             transformer: Transformer {
                 rules: syntax_rules,
                 is_variable_transformer: false,

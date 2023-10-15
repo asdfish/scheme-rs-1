@@ -419,7 +419,7 @@ impl Eval for ast::SyntaxCase {
                 result
                     .compile(env, cont)
                     .await?
-                    .expr(env, cont)
+                    .to_expr(env, cont)
                     .await?
                     .eval(env, cont)
                     .await

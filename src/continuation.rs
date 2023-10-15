@@ -177,7 +177,7 @@ impl Resumable for ResumableSyntaxCase {
                 result
                     .compile(&self.env, cont)
                     .await?
-                    .expr(&self.env, cont)
+                    .to_expr(&self.env, cont)
                     .await?
                     .eval(&self.env, cont)
                     .await
