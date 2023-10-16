@@ -34,6 +34,9 @@ pub fn fmt_list<'a>(car: &'a Gc<Value>, cdr: &'a Gc<Value>) -> BoxFuture<'a, Str
                 }
                 x => {
                     output.push(' ');
+		    if stack.is_empty() {
+			output.push_str(". ");
+		    }
                     output.push_str(&x.fmt().await)
                 }
             }

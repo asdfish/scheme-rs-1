@@ -174,7 +174,14 @@ fn list<'a>(
             // Improper lists:
             [token!(Lexeme::Period), tail @ ..] => {
                 let (remaining, expr) = expression(tail)?;
-                output.push(expr);
+		match expr {
+		    Syntax::List { list, .. } => {
+			for item in list {
+			    output.push(item);
+			}
+		    }
+		    expr => output.push(expr),
+		}
                 return match remaining {
                     [] => Err(ParseListError::ParseError(ParseError::UnexpectedEndOfFile)),
                     [token!(Lexeme::RParen), tail @ ..] => {

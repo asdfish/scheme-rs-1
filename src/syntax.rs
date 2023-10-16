@@ -14,6 +14,7 @@ use crate::{
 use futures::future::BoxFuture;
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
+/// Represents a source location
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
     pub line: u32,
@@ -370,6 +371,7 @@ impl Syntax {
         env: &Env,
         cont: &Option<Arc<Continuation>>,
     ) -> Result<Arc<dyn Eval>, CompileError> {
+        // let result = self.compile(env, cont).await?;
         ast::Body::compile_to_expr(
             &[
                 self.clone(),
