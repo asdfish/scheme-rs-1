@@ -6,7 +6,7 @@ use crate::{
     eval::Eval,
     expand::{Pattern, SyntaxRule, Template, Transformer},
     gc::Gc,
-    syntax::{wrap_expansions, CompileResultKind, Identifier, Mark, Span, Syntax},
+    syntax::{CompileResult, CompileResultKind, Identifier, Mark, Span, Syntax},
     util::ArcSlice,
     value::Value,
 };
@@ -808,98 +808,63 @@ impl Compile for ast::Body {
             return Err(CompileBodyError::EmptyBody(span.clone()));
         }
         // TODO: what if the body isn't a proper list?
-        let expr_stream = ExprStream::new(&exprs[..exprs.len() - 1]);
+        let expr_stream = ExprStreamCollector::new(&exprs[..exprs.len() - 1]);
         Ok(ast::Body::new(expr_stream.collect(env, cont).await?))
     }
 }
 
+#[derive(Clone)]
 pub struct ExprStream {
     bodies: Vec<(Vec<(Mark, Env)>, std::vec::IntoIter<Syntax>)>,
-    next_expr: Option<Arc<dyn Eval>>,
 }
 
 impl ExprStream {
     pub fn new(body: &[Syntax]) -> Self {
         Self {
             bodies: vec![(Vec::new(), Vec::from(body).into_iter())],
-            next_expr: None,
+        }
+    }
+
+    pub async fn next(
+        &mut self,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<Option<CompileResult>, CompileError> {
+        loop {
+            let (expansions, next) = loop {
+                let Some((expansions, mut head)) = self.bodies.pop() else {
+                    return Ok(None);
+                };
+
+                if let Some(next) = head.next() {
+                    self.bodies.push((expansions.clone(), head));
+                    break (expansions, next);
+                }
+            };
+
+            let mut compile_result = next.compile(env, cont).await?;
+            compile_result.push_macro_expansions(expansions);
+            match compile_result.kind {
+                CompileResultKind::Body(body) => self
+                    .bodies
+                    .push((compile_result.expansions, body.into_iter())),
+                _ => return Ok(Some(compile_result)),
+            }
         }
     }
 }
 
-impl ExprStream {
-    pub async fn next_define(
-        &mut self,
-        env: &Env,
-        cont: &Option<Arc<Continuation>>,
-    ) -> Result<Option<(Span, Vec<Syntax>)>, CompileError> {
-        if self.next_expr.is_some() {
-            return Ok(None);
-        }
+#[derive(Clone)]
+pub struct ExprStreamCollector {
+    defs: Vec<CompileResult>,
+    remaining: ExprStream,
+}
 
-        loop {
-            let (expansions, next) = loop {
-                let Some((expansions, mut head)) = self.bodies.pop() else {
-                    return Ok(None);
-                };
-
-                if let Some(next) = head.next() {
-                    self.bodies.push((expansions.clone(), head));
-                    break (expansions, next);
-                }
-            };
-
-            let mut compile_result = next.compile(env, cont).await?;
-            compile_result.push_macro_expansions(expansions);
-            match compile_result.kind {
-                CompileResultKind::Body(body) => self
-                    .bodies
-                    .push((compile_result.expansions, body.into_iter())),
-                CompileResultKind::Definition(def) => break Ok(Some((next.span().clone(), def))),
-                CompileResultKind::Expression(expr) => {
-                    self.next_expr = Some(wrap_expansions(&compile_result.expansions, expr));
-                    break Ok(None);
-                }
-                _ => (),
-            }
-        }
-    }
-
-    pub async fn next_expr(
-        &mut self,
-        env: &Env,
-        cont: &Option<Arc<Continuation>>,
-    ) -> Result<Option<Arc<dyn Eval>>, CompileError> {
-        if self.next_expr.is_some() {
-            return Ok(self.next_expr.take());
-        }
-        loop {
-            let (expansions, next) = loop {
-                let Some((expansions, mut head)) = self.bodies.pop() else {
-                    return Ok(None);
-                };
-
-                if let Some(next) = head.next() {
-                    self.bodies.push((expansions.clone(), head));
-                    break (expansions, next);
-                }
-            };
-
-            let mut compile_result = next.compile(env, cont).await?;
-            compile_result.push_macro_expansions(expansions);
-            match compile_result.kind {
-                CompileResultKind::Body(body) => self
-                    .bodies
-                    .push((compile_result.expansions, body.into_iter())),
-                CompileResultKind::Expression(expr) => {
-                    break Ok(Some(wrap_expansions(&compile_result.expansions, expr)));
-                }
-                CompileResultKind::Definition(_) | CompileResultKind::DefineSyntax => {
-                    break Err(CompileError::DefinitionInExpressionPosition(
-                        next.span().clone(),
-                    ));
-                }
-            }
+impl ExprStreamCollector {
+    pub fn new(body: &[Syntax]) -> Self {
+        Self {
+            defs: Vec::new(),
+            remaining: ExprStream::new(body),
         }
     }
 
@@ -908,16 +873,26 @@ impl ExprStream {
         env: &Env,
         cont: &Option<Arc<Continuation>>,
     ) -> Result<Vec<Arc<dyn Eval>>, CompileError> {
-        let mut defs = Vec::new();
-        while let Some(def) = self.next_define(env, cont).await? {
-            defs.push(def);
+        while let Some(def) = self.remaining.next(env, cont).await? {
+            let is_expr = def.is_expr();
+            self.defs.push(def);
+            if !is_expr {
+                continue;
+            }
+            // If it's not a definition, we can go ahead and collect
+            // the remaining expressions
+            while let Some(expr) = self.remaining.next(env, cont).await? {
+                if !expr.is_expr() {
+                    return Err(CompileError::DefinitionInExpressionPosition(
+                        expr.span.clone(),
+                    ));
+                }
+                self.defs.push(expr);
+            }
         }
         let mut output = Vec::new();
-        for (span, def) in defs {
-            output.push(ast::Define::compile_to_expr(&def, env, cont, &span).await?);
-        }
-        while let Some(expr) = self.next_expr(env, cont).await? {
-            output.push(expr);
+        for expr in self.defs.into_iter() {
+            output.push(expr.to_expr(env, cont).await?);
         }
         Ok(output)
     }

@@ -387,12 +387,14 @@ impl Syntax {
     }
 }
 
+#[derive(Clone)]
 pub struct CompileResult {
     pub span: Span,
     pub expansions: Vec<(Mark, Env)>,
     pub kind: CompileResultKind,
 }
 
+#[derive(Clone)]
 pub enum CompileResultKind {
     Body(Vec<Syntax>),
     Definition(Vec<Syntax>),
@@ -428,6 +430,10 @@ impl CompileResult {
         }
     }
 
+    pub fn is_definition(&self) -> bool {
+        matches!(self.kind, CompileResultKind::Definition(_))
+    }
+
     fn new_define_syntax(span: Span) -> Self {
         Self {
             span,
@@ -442,6 +448,10 @@ impl CompileResult {
             expansions: Vec::new(),
             kind: CompileResultKind::Expression(expr),
         }
+    }
+
+    pub fn is_expr(&self) -> bool {
+        matches!(self.kind, CompileResultKind::Expression(_))
     }
 
     fn push_macro_expansion(&mut self, mark: Mark, macro_env: Env) {
