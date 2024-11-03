@@ -1,6 +1,6 @@
 use crate::{
     ast,
-    continuation::Continuation,
+    continuation::{Continuation, Resumable},
     env::Env,
     error::RuntimeError,
     eval::Eval,
@@ -854,6 +854,7 @@ impl ExprStream {
     }
 }
 
+// TODO: Rename this to body continuation?
 #[derive(Clone)]
 pub struct ExprStreamCollector {
     defs: Vec<CompileResult>,
@@ -866,6 +867,16 @@ impl ExprStreamCollector {
             defs: Vec::new(),
             remaining: ExprStream::new(body),
         }
+    }
+
+    pub async fn resume(
+	mut self,
+	next: CompileResult,
+        env: &Env,
+        cont: &Option<Arc<Continuation>>,
+    ) -> Result<Vec<Arc<dyn Eval>>, CompileError> {
+	self.defs.push(next);
+	self.collect(env, cont).await
     }
 
     pub async fn collect(

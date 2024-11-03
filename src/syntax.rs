@@ -702,3 +702,28 @@ impl Syntax {
         matches!(self, Self::Identifier { .. })
     }
 }
+
+pub struct CompileSyntaxClosure {
+    up: Box<CompileSyntaxClosure>,
+}
+
+impl CompileSyntaxClosure {
+    async fn resume_with_syntax(
+	self,
+	new_val: Syntax,
+	env: &Env,
+    ) -> Result<CompileResult, CompileError> {
+	let result = new_val.compile(
+	    env,
+	    todo!(), // This cloned
+	).await?;
+	self.up.resume_with_result(result).await
+    }
+
+    async fn resume_with_result(
+	self,
+	new_result: CompileResult,
+    ) -> Result<CompileResult, CompileError> {
+	todo!()
+    }
+}
