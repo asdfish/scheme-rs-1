@@ -6,6 +6,7 @@ use std::{
     cmp::Ordering,
     fmt,
     ops::{Add, Div, Mul, Sub},
+    str::FromStr,
     sync::Arc,
 };
 
@@ -40,6 +41,18 @@ impl Number {
             Self::Rational(r) => r.to_u64().unwrap_or(0),
             Self::Real(r) => r.to_u64().unwrap_or(0),
             Self::Complex(c) => c.to_u64().unwrap_or(0),
+        }
+    }
+}
+
+impl FromStr for Number {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let number: Integer = s.parse().unwrap();
+        match number.to_i64() {
+            Some(fixed) => Ok(Number::FixedInteger(fixed)),
+            None => Ok(Number::BigInteger(number)),
         }
     }
 }

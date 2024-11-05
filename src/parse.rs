@@ -1,10 +1,8 @@
 use crate::{
     ast::Literal,
     lex::{Fragment, InputSpan, Lexeme, Token},
-    num::Number,
     syntax::Syntax,
 };
-use rug::Integer;
 
 #[derive(Debug)]
 pub enum ParseError<'a> {
@@ -232,11 +230,14 @@ fn boolean<'a>(i: &Token<'a>) -> Result<Literal, ParseError<'a>> {
 fn number<'a>(i: &Token<'a>) -> Result<Literal, ParseError<'a>> {
     let number = i.lexeme.to_number();
     // TODO: Parse correctly
+    Ok(Literal::Number(number.to_string()))
+    /*
     let number: Integer = number.parse().unwrap();
     match number.to_i64() {
         Some(fixed) => Ok(Literal::Number(Number::FixedInteger(fixed))),
         None => Ok(Literal::Number(Number::BigInteger(number))),
     }
+    */
 }
 
 fn string<'a>(i: &Token<'a>) -> Result<Literal, ParseError<'a>> {

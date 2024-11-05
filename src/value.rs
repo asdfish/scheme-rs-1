@@ -99,7 +99,7 @@ impl Value {
 
     pub fn from_literal(literal: &ast::Literal) -> Self {
         match literal {
-            ast::Literal::Number(n) => Value::Number(n.clone()),
+            ast::Literal::Number(n) => Value::Number(n.parse().unwrap()),
             ast::Literal::Boolean(b) => Value::Boolean(*b),
             ast::Literal::String(s) => Value::String(s.clone()),
             _ => todo!("Literal evaluation not implemented"),

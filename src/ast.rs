@@ -3,19 +3,18 @@ use crate::{
     eval::Eval,
     expand::Transformer,
     gc::Gc,
-    num::Number,
     syntax::{Identifier, Mark, Span, Syntax},
     util::ArcSlice,
     value::Value,
 };
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ByteVector(pub Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Literal {
-    Number(Number),
+    Number(String),
     Boolean(bool),
     Character(char),
     String(String),
