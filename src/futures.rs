@@ -1,6 +1,6 @@
 use crate::{continuation::Continuation, error::RuntimeError, gc::Gc, num::Number, value::Value};
 use futures::{future::try_join_all, FutureExt};
-use proc_macros::builtin;
+use scheme_rs_macros::builtin;
 use std::{sync::Arc, time::Duration};
 
 #[builtin("spawn")]

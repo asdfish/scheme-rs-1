@@ -16,7 +16,7 @@ mod collection;
 use collection::{dec_rc, inc_rc};
 pub use collection::{init_gc, process_mutation_buffer};
 use futures::future::Shared;
-pub use proc_macros::Trace;
+pub use scheme_rs_macros::Trace;
 
 use std::{
     cell::UnsafeCell,

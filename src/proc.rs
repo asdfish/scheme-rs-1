@@ -4,13 +4,12 @@ use crate::{
     env::Env,
     error::{Frame, RuntimeError},
     eval::{Eval, ValuesOrPreparedCall},
-    gc::Gc,
+    gc::{Gc, Trace},
     syntax::{Identifier, Span},
     value::Value,
 };
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use proc_macros::Trace;
 use std::sync::Arc;
 
 #[async_trait]

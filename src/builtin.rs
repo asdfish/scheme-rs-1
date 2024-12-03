@@ -5,6 +5,8 @@ use crate::{
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
+pub use scheme_rs_macros::builtin;
+
 type ExprFuture = BoxFuture<'static, Result<Vec<Gc<Value>>, RuntimeError>>;
 
 pub struct Builtin {

@@ -3,14 +3,13 @@ use crate::{
     continuation::Continuation,
     error::RuntimeError,
     expand::Transformer,
-    gc::Gc,
+    gc::{Gc, Trace},
     num::Number,
     proc::{Callable, ExternalFn, Procedure},
     syntax::Syntax,
-    Trace,
 };
 use futures::future::{BoxFuture, Shared};
-use proc_macros::builtin;
+use scheme_rs_macros::builtin;
 use std::sync::Arc;
 
 #[derive(Clone, Trace, derive_more::Debug)]

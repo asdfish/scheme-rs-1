@@ -5,7 +5,7 @@ use crate::{
     value::Value,
 };
 use num::{complex::Complex64, FromPrimitive, ToPrimitive, Zero};
-use proc_macros::builtin;
+use scheme_rs_macros::builtin;
 use rug::{Complete, Integer, Rational};
 use std::{
     cmp::Ordering,

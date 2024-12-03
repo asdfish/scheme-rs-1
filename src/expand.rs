@@ -2,11 +2,11 @@ use crate::{
     ast::Literal,
     continuation::Continuation,
     error::RuntimeError,
-    gc::Gc,
+    gc::{Gc, Trace},
     syntax::{Identifier, Span, Syntax},
     value::Value,
 };
-use proc_macros::{builtin, Trace};
+use scheme_rs_macros::builtin;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,

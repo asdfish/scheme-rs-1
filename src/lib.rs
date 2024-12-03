@@ -18,5 +18,3 @@ pub mod proc;
 pub mod syntax;
 pub mod util;
 pub mod value;
-
-pub use proc_macros::*;

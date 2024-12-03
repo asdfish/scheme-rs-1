@@ -1,12 +1,11 @@
 use futures::future::BoxFuture;
-use proc_macros::Trace;
 use std::collections::HashMap;
 
 use crate::{
     builtin::Builtin,
     compile::CompileError,
     error::RuntimeError,
-    gc::{init_gc, Gc},
+    gc::{init_gc, Gc, Trace},
     lex::{LexError, Token},
     parse::ParseError,
     syntax::{Identifier, Mark, ParsedSyntax},

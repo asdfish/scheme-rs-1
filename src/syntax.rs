@@ -5,7 +5,7 @@ use crate::{
     env::Env,
     error::RuntimeError,
     eval::Eval,
-    gc::Gc,
+    gc::{Trace, Gc},
     lex::{InputSpan, Lexeme, Token},
     parse::ParseError,
     proc::Callable,
@@ -13,7 +13,6 @@ use crate::{
     value::Value,
 };
 use futures::future::BoxFuture;
-use proc_macros::Trace;
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Trace)]

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use scheme_rs::{
-    builtin,
+    builtin::builtin,
     continuation::Continuation,
     env::Env,
     error::RuntimeError,
@@ -17,7 +17,6 @@ pub async fn test_assert(
     arg1: &Gc<Value>,
     arg2: &Gc<Value>,
 ) -> Result<Vec<Gc<Value>>, RuntimeError> {
-    //
     if !eqv(arg1, arg2).await {
         let arg1 = arg1.read().await.fmt().await;
         let arg2 = arg2.read().await.fmt().await;
