@@ -94,7 +94,7 @@ pub enum PrimOp {
     Set,
 
     // Cell operations:
-    /// Allocate a cell, returning a Gc<Value>.
+    /// Allocate a cell, returning a `Gc<Value>`.
     AllocCell,
 
     // List operators:

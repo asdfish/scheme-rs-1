@@ -44,7 +44,7 @@ impl Value {
     ///
     /// # Safety
     /// Calling this function is undefined behavior if the raw u64 was not obtained
-    /// via [into_raw]
+    /// via [Self::into_raw]
     pub unsafe fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
@@ -53,7 +53,7 @@ impl Value {
     ///
     /// # Safety
     /// Calling this function is undefined behavior if the raw u64 was not obtained
-    /// via [into_raw]
+    /// via [Self::into_raw]
     pub unsafe fn from_raw_inc_rc(raw: u64) -> Self {
         let tag = ValueType::from(raw & TAG);
         let untagged = raw & !TAG;
@@ -96,7 +96,7 @@ impl Value {
 
     /// Creates a raw u64 from a Value. Does not decrement the reference count.
     /// Calling this function without turning the raw value into a Value via
-    /// [from_raw] is equivalent to calling mem::forget on the value.
+    /// [Self::from_raw] is equivalent to calling mem::forget on the value.
     pub fn into_raw(val: Self) -> u64 {
         ManuallyDrop::new(val).0
     }
