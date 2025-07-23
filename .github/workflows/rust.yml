@@ -28,6 +28,11 @@ jobs:
     - name: Install packages
       run: sudo apt-get install libllvm18 llvm-18 llvm-18-dev libpolly-18-dev
     - uses: Swatinem/rust-cache@v2
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
     - name: Run checks
       env:
         RUSTFLAGS: -D warnings
