@@ -17,9 +17,9 @@ jobs:
         cargo-args:
           - build
           - fmt --check
-          - clippy --all-targets -- -D clippy::all
+          - clippy --all-targets --no-deps -- -D clippy::all
           - bench
-          - doc
+          - doc --no-deps
           - test
     runs-on: ubuntu-latest
     
