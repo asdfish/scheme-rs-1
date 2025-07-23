@@ -11,23 +11,24 @@ env:
 
 jobs:
   build:
-  
+    strategy:
+      matrix:
+        cargo-args:
+          - build
+          - fmt --check
+          - clippy --all-targets -- -D clippy::all
+          - bench
+          - doc
+          - test
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v3
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
     - name: Install packages
       run: sudo apt-get install libllvm18 llvm-18 llvm-18-dev libpolly-18-dev
-    - name: Build
-      run: cargo build 
-    - name: Check formatting
-      run: cargo fmt  -- --check
-    - name: Clippy
-      run: cargo clippy --all-targets -- -Dclippy::all -D warnings
-    - name: Test
-      run: cargo test
-    - name: Bench
-      run: cargo bench
+    - uses: Swatinem/rust-cache@v2
+    - name: Run checks
+      env:
+        RUSTFLAGS: -D warnings
+        RUSTDOCFLAGS: -D warnings
+      run: |
+        cargo ${{matrix.cargo-args}}
