@@ -31,7 +31,6 @@ jobs:
       with:
         cache-directories: |
           ~/.cargo/registry
-          ~/.cargo/git
           target
     - name: Run checks
       env:

@@ -11,28 +11,23 @@ homepage = "https://github.com/maplant/scheme-rs"
 repository = "https://github.com/maplant/scheme-rs"
 
 [dependencies]
-async-trait = "0.1"
 by_address = "1.2"
-derive_more = { version = "1.0", features = ["debug", "from"]}
-dyn-clone = "1.0.13"
-either = "1"
-futures = "0.3"
-indexmap = "2"
+derive_more = { version = "1.0", default-features = false, features = ["debug", "from"]}
+either = { version = "1", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["alloc", "std"] }
+indexmap = { version = "2", default-features = false, features = ["std"] }
 inventory = "0.3"
-inkwell = { version = "0.6", features = ["llvm18-1"] }
-nom = "7"
-nom_locate = "4"
-num = "0.4"
-ordered-float = "5"
+inkwell = { version = "0.6", default-features = false, features = ["llvm18-1"] }
+nom = { version = "7", default-features = false }
+nom_locate = { version = "4", default-features = false, features = ["alloc"] }
+num = { version = "0.4", default-features = false }
 scheme-rs-macros = { version = "0.1.0-alpha.1", path = "proc-macros" }
-rand = "0.8"
-thiserror = "1"
-tokio = { version = "1.41", features = ["full"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+tokio = { version = "1.41", default-features = false, features = ["full"] }
 unicode_categories = "0.1"
-# TODO: Get rid of this dependency
-derivative = "2"
-malachite = { version = "0.5.1", features = ["floats"] }
-rustyline = { version = "15.0.0", features = ["derive"] }
+malachite = { version = "0.5.1", default-features = false, features = ["floats", "malachite-nz", "naturals_and_integers", "rationals"] }
+rustyline = { version = "15.0.0", default-features = false, features = ["derive"] }
+ordered-float = { version = "5.0.0", default-features = false }
 
 [profile.release]
 lto = true
